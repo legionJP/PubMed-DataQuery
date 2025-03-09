@@ -9,6 +9,7 @@ packages = [{include = "pubmed_fetcher"}, {include= "get_paper_list"}]
 [tool.poetry.dependencies]
 python = "^3.12"
 requests = "^2.32.3"
+pandas = "^2.2.3"
 
 
 [build-system]

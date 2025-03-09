@@ -1,310 +1,232 @@
 import requests
 from typing import List, Dict, Any
 import csv
+import pandas as pd
+import re
+import xml.etree.ElementTree as ET
+import time  # For introducing sleep intervals
 
 class PubMedFetcher:
-    def fetch_pubmed_ids(self, query:str) -> List[str]:
-        url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    def __init__(self, debug: bool = False) -> None:
+        self.debug = debug
+
+    '''
+    Method to fetch the ids from esearch based on query , adding the debug and retry as 
+    for loop for 3 attempt to fetch data and handle the data request exceptions.
+    '''
+
+    def fetch_pubmed_ids(self, query: str) -> List[str]:
+        base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
         params = {
             "db": "pubmed",
             "term": query,
-            "retmax": 1000,
+            "retmax": 0,
             "retmode": "json",
         }
-        response = requests.get(url, params=params)
+        response = requests.get(base_url, params=params)
         response.raise_for_status()
         json_data = response.json()
-
+        total_count = int(json_data["esearchresult"]["count"])
         if self.debug:
-            print("Response Dats",json_data)
-        return json_data["esearchresult"]["idlist"]
+            print(f"Total matching records: {total_count}")
+        all_ids: List[str] = []
+        retmax = 100
+        for start in range(0, total_count, retmax):
+            params = {
+                "db": "pubmed",
+                "term": query,
+                "retmax": retmax,
+                "retstart": start,
+                "retmode": "json",
+            }
+            if self.debug:
+                print(f"Fetching records from {start} to {start + retmax}")
+            for attempt in range(3):  # Retry up to 3 times
+                try:
+                    response = requests.get(base_url, params=params)
+                    response.raise_for_status()
+                    json_data = response.json()
+                    ids = json_data["esearchresult"]["idlist"]
+                    all_ids.extend(ids)
+                    time.sleep(1)
+                    break
+                except requests.exceptions.RequestException as e:
+                    if attempt < 2:
+                        print(f"Retrying due to error: {e}")
+                        time.sleep(2 ** attempt)
+                    else:
+                        raise RuntimeError(f"Failed to fetch PubMed IDs after 3 attempts: {e}")
+        return all_ids
     '''
-    Method to fetch the paper details from pubmed using the pubmed ids
+    Method to fetch the papers based on the pubmed_ids and Process in batches to avoid URL-too-long errors
+    and Retry up to 3 times and handle the request exception
     '''
 
-    def fetch_paper_details(self, pubmed_ids: List[str]) -> List[Dict[str,Any]]:
+    def fetch_paper_details(self, pubmed_ids: List[str]) -> List[Dict[str, Any]]:
         if not pubmed_ids:
             if self.debug:
-                print(" No Pubmed ids found")
+                print("No PubMed IDs found.")
             return []
-        
-        url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-        params = {
-            "db": "pubmed",
-            "id": ",".join(pubmed_ids),
-            "retmode": "json",
-        }
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        return self.parse_pubmed_json(data)
-    
+        base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+        all_papers: List[Dict[str, Any]] = []
+        batch_size = 100  # Process in batches to avoid URL-too-long errors
+        for i in range(0, len(pubmed_ids), batch_size):
+            batch_ids = pubmed_ids[i:i + batch_size]
+            params = {
+                "db": "pubmed",
+                "id": ",".join(batch_ids),
+                "retmode": "xml",
+            }
+            for attempt in range(3):  # Retry up to 3 times
+                try:
+                    response = requests.get(base_url, params=params)
+                    response.raise_for_status()
+                    if self.debug:
+                        print(f"Fetching details for PubMed IDs batch: {batch_ids}")
+                        print("Response:", response.text)
+                    papers = self.parse_paper_details(response.text)
+                    all_papers.extend(papers)
+                    break
+                except requests.exceptions.RequestException as e:
+                    if attempt < 2:
+                        print(f"Retrying due to error: {e}")
+                        time.sleep(2 ** attempt)
+                    else:
+                        raise RuntimeError(f"Failed to fetch paper details after 3 attempts: {e}")
+        return all_papers
+
     '''
-    Method to parse the paper details in the Required format 
+    Method to parse the Paper details based on Output requirements:
+     Returntheresults as a CSV file with the following columns:
+     PubmedID:Uniqueidentifier for the paper.
+     Title: Title of the paper.
+     Publication Date: Date the paper was published.
+     Non-academicAuthor(s): Names of authors affiliated with non-academic institutions.
+     CompanyAffiliation(s): Names of pharmaceutical/biotech companies.
+     Corresponding Author Email: Email address of the corresponding author
+
+    And  filter author if  Only  at least one author qualifies (i.e. has a company affiliation)
+
     '''
 
-    def parse_pubmed_json(self, json_data: Dict[str, Any]) -> List[Dict[str,Any]]:
+    def parse_paper_details(self, xml_data: str) -> List[Dict[str, Any]]:
+        papers: List[Dict[str, Any]] = []
+        try:
+            root = ET.fromstring(xml_data)
+        except ET.ParseError as e:
+            raise ValueError(f"Failed to parse XML data: {e}")
+        for article in root.findall(".//PubmedArticle"):
+            paper = {
+                "PubmedID": article.findtext(".//PMID") or "Unknown",
+                "Title": article.findtext(".//ArticleTitle") or "Unknown",
+                "Publication Date": "",
+                "Non-academic Author(s)": "None",
+                "Company Affiliation(s)": "None",
+                "Corresponding Author Email": "None"
+            }
+            day = article.findtext(".//PubDate/Day", "")
+            month = article.findtext(".//PubDate/Month", "")
+            year = article.findtext(".//PubDate/Year", "")
+            if day and month and year:
+                paper["Publication Date"] = f"{year}/{month}/{day}"
+            elif year:
+                paper["Publication Date"] = year
 
-        if "result" not in json_data:
-            raise ValueError("❌ Missing 'result' key in PubMed response!")
-        
-        papers: List[Dict[str,Any]] =[]
+            authors: List[str] = []
+            affiliations: List[str] = []
+            for author in article.findall(".//Author"):
+                name = f"{author.findtext('LastName', '')}, {author.findtext('ForeName', '')}"
+                affiliation = author.findtext(".//Affiliation", "")
+                email = ""
+                email_match = re.search(r"[\w.-]+@[\w.-]+", affiliation)
+                if email_match:
+                    email = email_match.group(0)
+                    paper["Corresponding Author Email"] = email
+                authors.append(name)
+                affiliations.append(affiliation)
 
-        company_keywords = [
-            'pharma', 'biotech', 'inc', 'ltd', 'corp', 'gmbh', 'company',
-            'pharmaceutical', 'laboratories', 'corporation', 'biosciences', 'therapeutics',
-            'bio', 'llc', 'limited', 'biopharmaceutics', 'pfizer', 'novartis', 'roche',
-            'merck', 'gsk', 'abbvie', 'amgen', 'bms', 'j&j'
-        ]
-        academic_keywords = ['university', 'institute', 'college', 'hospital']
-
-        for uid, paper_info in json_data["result"].items():
-            if uid =="uids":
-                continue
-
-            if not isinstance(paper_info, dict):
-                if self.debug:  
-                    print(f"⚠️ Skipping invalid entry: {uid}")  
-                continue  
-
-            pubmed_id = paper_info.get('uid', '')
-            title = paper_info.get('title', '')
-            publication_date = paper_info.get('pubdate','')
-
-            authors = paper_info.get('authors', [])
-           # print(f"pubmed ID {uid} - Authors: {authors}")
-
-            non_academic_authors = [
-                author.get('name', '')
-                for author in authors 
-                if not any (academic_kw in author.get('affiliation', '').lower() for academic_kw in academic_keywords)
-            ]
-        
-            # company_affiliations = [
-            #     author['affiliation']
-            #     for author in authors
-            #     if any(keyword in author.get('affiliation', '').lower() for keyword in company_keywords)
-            # ]
-            company_affiliations = []
-            for author in authors:
-                affiliation = author.get('affiliation', '')
-                if affiliation and any(keyword in affiliation.lower() for keyword in company_keywords):
-                    company_affiliations.append(affiliation)
-
-            if self.debug:
-                print(f"Paper {pubmed_id} - Company Affiliations: {company_affiliations}")
-            #company_affiliations = [author['affiliation'] for author in authors if 'pharma' in author.get('affiliation','').lower()]
-            
-            # Only include the paper if at least one company affiliation is present
-            if company_affiliations:
-                corresponding_author_email= paper_info.get('corresponding_author',{}).get('email', '')
-                papers.append(
-                    {
-                        'PubmedID': pubmed_id,
-                        'Title' : title,
-                        'Publication Date': publication_date,
-                        'Non-academic Author(s)': non_academic_authors,
-                        'Company Affiliation(s)' : company_affiliations,
-                        'Corresponding Author Email': corresponding_author_email
-                    }
+            # Filter authors using only company keywords
+            non_academic_authors = self.filter_non_academic_authors(authors, affiliations)
+            # Only include paper if at least one author qualifies (i.e. has a company affiliation)
+            if non_academic_authors:
+                paper["Non-academic Author(s)"] = "; ".join(
+                    [author["name"] for author in non_academic_authors]
                 )
-        if self.debug and not papers:
-            print("No Matching papers found with the company affiliations")
+                paper["Company Affiliation(s)"] = "; ".join(
+                    [author["company"] for author in non_academic_authors]
+                )
+                papers.append(paper)
+            else:
+                if self.debug:
+                    print(f"Skipping paper {paper['PubmedID']} as no company affiliation found")
+        if self.debug:
+            print("Parsed Papers:", papers)
         return papers
     
     '''
-    Method to sacve the paper details in the CSV file
+        Filter the authors based the non_academic_authors and filter based on 
+        Keywords indicating a company affiliation and academic_keywords to 
+        Exclude if any academic keyword is present.
+
     '''
 
-    def save_to_csv(self, data: List[Dict[str,Any]],filename:str) -> None: # here data is paper detail method obj 
+    def filter_non_academic_authors(self, authors: List[str], affiliations: List[str]) -> List[Dict[str, str]]:
+        filtered_authors: List[Dict[str, str]] = []
+        # Keywords indicating a company affiliation.
+        company_keywords = [
+            "inc", "ltd", "corp", "corporation", "pharma", "biotech",
+            "biopharma", "healthtech", "company", "therapeutics", "healthcare"
+        ]
+        # Keywords indicating an academic affiliation.
+        academic_keywords = [
+            "university", "college", "institute", "hospital", "school", "department", "faculty"
+        ]
+        
+        for name, affiliation in zip(authors, affiliations):
+            affiliation_lower = affiliation.lower()
+            if self.debug:
+                print(f"Processing author: {name}, affiliation: {affiliation}")
+            
+            # Exclude if any academic keyword is present.
+            if any(ak in affiliation_lower for ak in academic_keywords):
+                if self.debug:
+                    print(f"Excluded academic author: {name} with affiliation: {affiliation}")
+                continue  # Skip this author
+            
+            # Include only if any company keyword is present.
+            if any(ck in affiliation_lower for ck in company_keywords):
+                filtered_authors.append({
+                    "name": name,
+                    "company": affiliation
+                })
+                if self.debug:
+                    print(f"Included non-academic author: {name} with company affiliation: {affiliation}")
+        
+        return filtered_authors
+
+    '''
+    Method to save the data to csv file using the pandas dataframe
+    '''
+    def save_to_csv(self, data: List[Dict[str, Any]], filename: str, mode: str = 'w') -> None:
         if not data:
             print("⚠️ No data to save!")
             return
-        fieldnames = [ 'PubmedID',
-                       'Title', 
-                       'Publication Date',
-                       'Non-academic Author(s)',
-                       'Company Affilication(s)',
-                       'Corresponding Author Email'
+        fieldnames = [
+            "PubmedID", "Title", "Publication Date", "Non-academic Author(s)",
+            "Company Affiliation(s)", "Corresponding Author Email"
         ]
 
-        with open(filename, 'w' , newline='', encoding='utf-8') as csvfile:
-            # writing the header and data rows
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            for row in data:
-                # Convert list values into semicolon-separated strings
-                row_copy = row.copy()
-                if isinstance(row_copy.get('Non-academic Author(s)'), list):
-                    row_copy['Non-academic Author(s)'] = '; '.join(row_copy['Non-academic Author(s)'])
-                if isinstance(row_copy.get('Company Affiliation(s)'), list):
-                    row_copy['Company Affiliation(s)'] = '; '.join(row_copy['Company Affiliation(s)'])
-                writer.writerow(row_copy)
+        # Convert data to a DataFrame using the pandas and Saving DataFrame to CSV
+        df = pd.DataFrame(data,columns=fieldnames)
+        
+        if mode == 'w':
+            df.to_csv(filename, index=False, mode='w')
+        else:
+            df.to_csv(filename, index=False, mode='a', header=False)
 
-
-
-## Code 2
-# import requests
-# from typing import List, Dict, Any
-# import csv
-# import re
-
-# class PubMedFetcher:
-#     def fetch_pubmed_ids(self, query: str, retmax: int = 1000) -> List[str]:
-#         """
-#         Fetch PubMed IDs based on the search query.
-
-#         Args:
-#             query (str): The search query.
-#             retmax (int): The maximum number of results per request.
-
-#         Returns:
-#             List[str]: A list of PubMed IDs.
-#         """
-#         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-#         params = {
-#             "db": "pubmed",
-#             "term": query,
-#             "retmax": retmax,
-#             "retmode": "json",
-#         }
-#         response = requests.get(url, params=params)
-#         response.raise_for_status()
-#         json_data = response.json()
-#         print("Response data:", json_data)
-
-#         return json_data["esearchresult"]["idlist"]
-
-#     def post_ids_to_history(self, pubmed_ids: List[str]) -> tuple[str, str]:
-#         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/epost.fcgi"
-#         params = {
-#             "db": "pubmed",
-#             "id": ",".join(pubmed_ids)
-#         }
-#         response = requests.post(url, data=params)
-#         response.raise_for_status()
-#         xml_data = response.text
-#         webenv = re.search(r"<WebEnv>(\S+)</WebEnv>", xml_data).group(1)
-#         query_key = re.search(r"<QueryKey>(\d+)</QueryKey>", xml_data).group(1)
-#         return webenv, query_key
-
-#     def fetch_paper_details_from_history(self, webenv: str, query_key: str, retstart: int = 0, retmax: int = 200) -> List[Dict[str, str]]:
-#         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-#         params = {
-#             "db": "pubmed",
-#             "query_key": query_key,
-#             "WebEnv": webenv,
-#             "retstart": retstart,
-#             "retmax": retmax,
-#             "retmode": "json",
-#         }
-#         response = requests.get(url, params=params)
-#         response.raise_for_status()
-#         data = response.json()
-#         return self.parse_pubmed_json(data)
-
-#     def parse_pubmed_json(self, json_data: Dict[str, Any]) -> List[Dict[str, str]]:
-#         """
-#         Parse the PubMed JSON response and extract paper details.
-
-#         Args:
-#             json_data (Dict[str, Any]): The JSON data from PubMed.
-
-#         Returns:
-#             List[Dict[str, str]]: A list of dictionaries containing paper details.
-#         """
-#         if "result" not in json_data:
-#             raise ValueError("❌ Missing 'result' key in PubMed response!")
-#         papers = []
-
-#         for uid, paper_info in json_data["result"].items():
-#             if uid == "uids":
-#                 continue
-
-#             if not isinstance(paper_info, dict):
-#                 print(f"⚠️ Skipping invalid entry: {uid}")
-#                 continue
-
-#             pubmed_id = paper_info.get('uid')
-#             title = paper_info.get('title', '')
-#             publication_date = paper_info.get('pubdate', '')
-
-#             authors = paper_info.get('authors', [])
-#             print(f"PubMed ID {uid} - Authors: {authors}")
-
-#             non_academic_authors = [
-#                 author['name']
-#                 for author in authors
-#                 if 'university' not in author.get('affiliation', '').lower()
-#             ]
-
-#             company_keywords = [
-#                 'pharma', 'biotech', 'inc', 'ltd', 'corp', 'gmbh', 'research',
-#                 'company', 'pharmaceutical', 'laboratories', 'corporation', 'research institute', 'biosciences', 'therapeutics', 'bio', 'llc', 'limited', 'industries', 'technologies'
-#             ]
-
-#             company_affiliations = [
-#                 author.get('affiliation', '')
-#                 for author in authors
-#                 if any(keyword in author.get('affiliation', '').lower() for keyword in company_keywords)
-#             ]
-
-#             corresponding_author_email = paper_info.get('corresponding_author', {}).get('email', '')
-
-#             print(f"Company Affiliations for PubMed ID {uid}: {company_affiliations}")
-
-#             if company_affiliations:
-#                 papers.append(
-#                     {
-#                         'PubmedID': pubmed_id,
-#                         'Title': title,
-#                         'Publication Date': publication_date,
-#                         'Non-academic Author(s)': ', '.join(non_academic_authors),
-#                         'Company Affiliation(s)': ', '.join(company_affiliations),
-#                         'Corresponding Author Email': corresponding_author_email
-#                     }
-#                 )
-
-#         if not papers:
-#             print("No matching papers found with company affiliations.")
-#         return papers
-
-#     def save_to_csv(self, data: List[Dict[str, str]], filename: str):
-#         """
-#         Save the paper details to a CSV file.
-
-#         Args:
-#             data (List[Dict[str, str]]): A list of dictionaries containing paper details.
-#             filename (str): The name of the output CSV file.
-#         """
-#         if not data:
-#             print("⚠️ No data to save!")
-#             return
-
-#         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-#             fieldnames = ['PubmedID', 'Title', 'Publication Date', 'Non-academic Author(s)', 'Company Affiliation(s)', 'Corresponding Author Email']
-#             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-#             writer.writeheader()
-#             for row in data:
-#                 writer.writerow(row)
-
-# # Example Usage
-# fetcher = PubMedFetcher()
-# query = "pharmaceutical company OR biotech company AND 2021[DP]"
-# pubmed_ids = fetcher.fetch_pubmed_ids(query)
-# webenv, query_key = fetcher.post_ids_to_history(pubmed_ids)
-
-# # Fetch details in batches
-# retstart = 0
-# retmax = 200
-# all_details = []
-
-# while True:
-#     details_batch = fetcher.fetch_paper_details_from_history(webenv, query_key, retstart, retmax)
-#     if not details_batch:
-#         break
-#     all_details.extend(details_batch)
-#     retstart += retmax
-
-# fetcher.save_to_csv(all_details, "pubmed_results.csv")
-# print(all_details)
+        # with open(filename, mode, newline='', encoding='utf-8') as csvfile:
+        #     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        #     if mode == 'w':  # Write header only if file is being created
+        #         writer.writeheader()
+        #     for row in data:
+        #         writer.writerow(row)
