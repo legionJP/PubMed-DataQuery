@@ -1,6 +1,5 @@
 import requests
 from typing import List, Dict, Any
-import csv
 import pandas as pd
 import re
 import xml.etree.ElementTree as ET
