@@ -87,7 +87,7 @@ Function: run() -> None: Executes the GetPapersList class.
     - poetry run [main-module]
 
 # Program Execution Steps :
-Program follows all the Query Syntax from the pubmed API see the reference link : [PubMed API (https://www.ncbi.nlm.nih.gov/books/NBK25497/#chapter2.Usage_Guidelines_and_Requiremen)
+Program follows all the Query Syntax from the pubmed API see the reference link : [PubMed API](https://www.ncbi.nlm.nih.gov/books/NBK25497/#chapter2.Usage_Guidelines_and_Requiremen)
 
 - Query Execution Examples 
 - ### 1. Basic Query
