@@ -1,3 +1,8 @@
+#
+# Fetchpapersusing the PubMed AP
+
+# 1. Program Setup 
+
 # Queries : 
 
 ### Query for results1
@@ -36,3 +41,19 @@ AND: Combines different keywords to narrow down the search.
 OR: Includes any of the listed terms in the search.
 
 [dp]: Stands for "Date of Publication," which limits the search to papers published in the specified year
+
+
+
+# Publishing the Package to Pypi
+
+Upload to Test PyPI (optional, for testing):
+
+```bash
+poetry config repositories.test-pypi https://test.pypi.org/legacy/
+poetry publish -r test-pypi
+```
+
+Upload to PyPI:
+```bash
+poetry publish --username __token__ --password <your-pypi-token>
+```
