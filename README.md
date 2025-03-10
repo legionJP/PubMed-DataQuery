@@ -122,10 +122,11 @@ poetry run get-papers-list "lung cancer AND (targeted therapy OR immunotherapy) 
 - ## Development Tools:
     - [Poetry](https://python-poetry.org/docs/)    : for Dependecy Management and Packaging
     - [pytest](https://docs.pytest.org/en/stable/) : to write and running the test cases
+    
 - ## LLM Assistance: 
-    - Project was developed with the assistance from Microsoft Copilot by using the right prompts
+    - Project was developed with the assistance from Open-AI ChatGPT4 by using the right prompts
     - Code Refactoring and readibility, Error Handling
-    - [Microsoft Copilot](https://copilot.microsoft.com/)
+    - [Open AI ChatGPT4](https://chatgpt.com/share/67ce4517-b6c4-8012-9db2-42090ff54487)
 
 
 # Publish the module in test-pypi.
