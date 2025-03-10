@@ -145,7 +145,7 @@ poetry publish --username __token__ --password <your-pypi-token>
 ```
 
 ### Install Package from PyPi 
-- pip install -i https://test.pypi.org/...
+- pip install -i [Module on pypi](https://test.pypi.org/...)
 
 ### License 
 - This project is licensed under MIT License see [LICENSE](/LICENSE)
