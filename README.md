@@ -10,7 +10,7 @@ This Python program fetches research papers from PubMed based on a user-specifie
 
 - ## [Module: pubmed_fetcher.py](pubmed-query/pubmed_fetcher/pubmed_fetcher.py)
 
-- Features: 
+  ## Features: 
 - modular functions and classe Concept
 - Fetches papers using the PubMed API.
 - Supports PubMed's full query syntax for flexibility.
