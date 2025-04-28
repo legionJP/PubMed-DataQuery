@@ -32,11 +32,12 @@ This Python program fetches research papers from PubMed based on a user-specifie
   - **-d or --debug**: Print debug information during execution.
   - **-f or --file**: Specify the filename to save the results. If this option is not provided, print the output to the console.
 
-# Command line Instructions:
+- ### Command line Instructions:
+
+- argparse Automatically Includes -h or --help: The argparse module automatically includes a -h or --help option that displays the usage instructions. 
 ```
-argparse Automatically Includes -h or --help: The argparse module automatically includes a -h or --help option that displays the usage instructions. 
+  poetry run get-papers-list -h
 ```
-- poetry run get-papers-list -h
 - ## Query Syntax:
 
 AND: Combines different keywords to narrow down the search.
