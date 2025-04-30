@@ -1,7 +1,7 @@
 # 1.
 # PubMed Research Paper Fetcher
 
-## Description
+2. ## Description
 
 #### Fetch Papers Using The PubMed API
 This Python program fetches research papers from PubMed based on a user-specified query. It identifies papers with at least one author affiliated with a pharmaceutical or biotech company and returns the results as a CSV file.
