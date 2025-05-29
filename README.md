@@ -1,4 +1,4 @@
-# 1.
+# 
 # PubMed Research Paper Fetcher
 
 2. ## Description
